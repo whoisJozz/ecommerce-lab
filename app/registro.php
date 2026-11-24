@@ -1,8 +1,6 @@
 <?php
-$conn = new mysqli("bd_maestro", "gerente_db", "gerentepwd123", "ecommerce_db");
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
-}
+require_once __DIR__ . '/db.php';
+$conn = getConexion('escritura'); // Todo registro va al maestro
 
 $message = '';
 $success = false;

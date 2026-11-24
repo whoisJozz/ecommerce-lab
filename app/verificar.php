@@ -1,5 +1,5 @@
 <?php
-$conn = new mysqli("bd_maestro", "app_login", "apploginpwd123", "ecommerce_db");
+$conn = new mysqli("bd_maestro", "admin_db", "admin123", "ecommerce_db");
 if ($conn->connect_error) {
     die("Connection failed: " . $conn->connect_error);
 }
