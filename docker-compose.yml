@@ -1,0 +1,124 @@
+services:
+  bd_maestro:
+    container_name: bd_maestro
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: ecommerce_db
+      MYSQL_USER: admin_db
+      MYSQL_PASSWORD: admin123
+    command:
+      - --server-id=1
+      - --log-bin=mysql-bin
+    volumes:
+      - maestro_data:/var/lib/mysql
+      - ./nuevo_ecommerce.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpassword"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    restart: unless-stopped
+
+  esclavo_1:
+    container_name: esclavo_1
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+    command:
+      - --server-id=2
+    volumes:
+      - esclavo1_data:/var/lib/mysql
+    depends_on:
+      bd_maestro:
+        condition: service_healthy
+    restart: unless-stopped
+
+  esclavo_2:
+    container_name: esclavo_2
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+    command:
+      - --server-id=3
+    volumes:
+      - esclavo2_data:/var/lib/mysql
+    depends_on:
+      esclavo_1:
+        condition: service_started
+    restart: unless-stopped
+
+  app:
+    build: ./app
+    container_name: ecommerce_app
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?Falta JWT_SECRET en el archivo .env}
+    expose:
+      - "80"
+    depends_on:
+      bd_maestro:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+      ia_service:
+        condition: service_started
+    restart: unless-stopped
+
+  waf:
+    image: owasp/modsecurity-crs:nginx
+    container_name: ecommerce_waf
+    ports:
+      - "8080:8080"
+    environment:
+      BACKEND: "http://app:80"
+      PARANOIA: "1"
+      ANOMALY_INBOUND: "5"
+      ANOMALY_OUTBOUND: "4"
+      BLOCKING_PARANOIA: "1"
+      MODSEC_RULE_ENGINE: "On"
+      MODSEC_AUDIT_LOG: "/dev/stdout"
+      MODSEC_AUDIT_LOG_FORMAT: "JSON"
+      MODSEC_AUDIT_ENGINE: "RelevantOnly"
+    depends_on:
+      - app
+    restart: unless-stopped
+
+  mailhog:
+    image: mailhog/mailhog
+    container_name: ecommerce_mailhog
+    ports:
+      - "8025:8025"
+    restart: unless-stopped
+
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: ecommerce_chromadb
+    expose:
+      - "8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    restart: unless-stopped
+
+  ia_service:
+    build: ./ia_service
+    container_name: ia_service
+    expose:
+      - "8000"
+    environment:
+      OLLAMA_URL: "http://host.docker.internal:11434"
+      CHROMA_HOST: "chromadb"
+      CHROMA_PORT: "8000"
+      EMBED_MODEL: "nomic-embed-text"
+      CHAT_MODEL: "llama3.2:3b"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - chromadb
+    restart: unless-stopped
+
+volumes:
+  maestro_data:
+  esclavo1_data:
+  esclavo2_data:
+  chroma_data:
