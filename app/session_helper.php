@@ -38,7 +38,7 @@ function destroySessionAndRedirect(): void {
 // Exige sesión de servidor + JWT válido y coherente (misma identidad y mismo rol)
 function requireAuth() {
     if (!isset($_SESSION['authenticated_user_id'])) {
-        header("Location: index.php");
+        header("Location: login.php");
         exit;
     }
 
