@@ -139,6 +139,21 @@ function formato_tiempo(int $segundos): string {
         <input type="submit" value="Desbloquear todo">
     </form>
 
+    <h3 style="margin-top: 30px;">Asistente SOC y Base de Conocimiento IA (Ollama + ChromaDB)</h3>
+    <p style="font-size: 13px; color: #8fa8c7;">
+        Analiza los últimos eventos de inicio de sesión con IA local o sincroniza el catálogo de productos hacia ChromaDB.
+    </p>
+    <div style="margin-bottom: 12px;">
+        <button type="button" id="btn-sync-chroma">Sincronizar catálogo a ChromaDB</button>
+        <span id="sync-status" style="margin-left: 10px; font-size: 13px; color: #ffd700;"></span>
+    </div>
+    <form id="form-soc-ia" style="max-width: 750px;">
+        <input type="hidden" id="soc-csrf" value="<?= h($csrf) ?>">
+        <input type="text" id="soc-msg" maxlength="400" placeholder="Ej. Analiza los últimos intentos fallidos y dime si hay patrón de ataque" style="width: 72%;" required>
+        <button type="submit" id="btn-soc-enviar">Analizar con IA</button>
+    </form>
+    <pre id="soc-respuesta" style="max-width: 750px; white-space: pre-wrap; background: #11151c; border: 1px solid #2a3340; padding: 12px; border-radius: 4px; margin-top: 10px; min-height: 50px; color: #e6edf3;">Listo para analizar eventos de seguridad...</pre>
+
     <h3 style="margin-top: 30px;">Últimos intentos de inicio de sesión</h3>
     <?php if (!$historial): ?>
         <p>Aún no hay intentos registrados.</p>
@@ -156,5 +171,57 @@ function formato_tiempo(int $segundos): string {
             <?php endforeach; ?>
         </table>
     <?php endif; ?>
+
+    <script>
+    (function () {
+        var csrf = document.getElementById('soc-csrf').value;
+        var btnSync = document.getElementById('btn-sync-chroma');
+        var syncStatus = document.getElementById('sync-status');
+
+        btnSync.addEventListener('click', async function () {
+            btnSync.disabled = true;
+            syncStatus.textContent = 'Indexando productos en ChromaDB...';
+            try {
+                var fd = new FormData();
+                fd.append('csrf_token', csrf);
+                fd.append('accion', 'sincronizar');
+                var r = await fetch('api_chat.php', { method: 'POST', body: fd });
+                var d = await r.json();
+                syncStatus.textContent = d.ok ? ('Listo: ' + d.indexados + ' documentos indexados en ChromaDB.') : ('Error: ' + (d.error || 'fallo'));
+            } catch (e) {
+                syncStatus.textContent = 'Error de red al sincronizar.';
+            } finally {
+                btnSync.disabled = false;
+            }
+        });
+
+        var form = document.getElementById('form-soc-ia');
+        var input = document.getElementById('soc-msg');
+        var out = document.getElementById('soc-respuesta');
+        var btn = document.getElementById('btn-soc-enviar');
+
+        form.addEventListener('submit', async function (ev) {
+            ev.preventDefault();
+            var txt = input.value.trim();
+            if (!txt) return;
+            btn.disabled = true;
+            out.textContent = 'Consultando modelo local en Ollama...';
+            try {
+                var fd = new FormData();
+                fd.append('csrf_token', csrf);
+                fd.append('accion', 'chat');
+                fd.append('modo', 'seguridad');
+                fd.append('mensaje', txt);
+                var r = await fetch('api_chat.php', { method: 'POST', body: fd });
+                var d = await r.json();
+                out.textContent = d.ok ? d.respuesta : ('Error: ' + (d.error || 'No se pudo obtener respuesta.'));
+            } catch (e) {
+                out.textContent = 'Error de comunicación con api_chat.php.';
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    })();
+    </script>
 </body>
 </html>

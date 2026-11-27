@@ -88,6 +88,7 @@ if ($esGestion && isset($_GET['edit'])) {
 }
 
 $productos = $connRead->query("SELECT id_producto, nombre, precio, stock FROM productos ORDER BY id_producto DESC");
+$csrfChat = generateCsrfToken();
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -172,6 +173,49 @@ $productos = $connRead->query("SELECT id_producto, nombre, precio, stock FROM pr
             </tr>
         <?php endwhile; ?>
     </table>
+
+    <h3 style="margin-top: 30px;">Asistente Virtual de Tienda (Ollama + ChromaDB)</h3>
+    <p style="font-size: 13px; color: #8fa8c7;">
+        Pregunta sobre disponibilidad de productos, precios, envíos o garantías.
+    </p>
+    <form id="form-cat-ia" style="max-width: 750px;">
+        <input type="hidden" id="cat-csrf" value="<?= h($csrfChat) ?>">
+        <input type="text" id="cat-msg" maxlength="400" placeholder="Ej. ¿Qué productos tienen disponibles y cuánto cuesta el envío?" style="width: 72%;" required>
+        <button type="submit" id="btn-cat-enviar">Preguntar</button>
+    </form>
+    <pre id="cat-respuesta" style="max-width: 750px; white-space: pre-wrap; background: #11151c; border: 1px solid #2a3340; padding: 12px; border-radius: 4px; margin-top: 10px; min-height: 50px; color: #e6edf3;">Hola, ¿en qué puedo ayudarte hoy?</pre>
+
+    <script>
+    (function () {
+        var form = document.getElementById('form-cat-ia');
+        var input = document.getElementById('cat-msg');
+        var out = document.getElementById('cat-respuesta');
+        var btn = document.getElementById('btn-cat-enviar');
+        var csrf = document.getElementById('cat-csrf').value;
+
+        form.addEventListener('submit', async function (ev) {
+            ev.preventDefault();
+            var txt = input.value.trim();
+            if (!txt) return;
+            btn.disabled = true;
+            out.textContent = 'Consultando catálogo en ChromaDB y Ollama...';
+            try {
+                var fd = new FormData();
+                fd.append('csrf_token', csrf);
+                fd.append('accion', 'chat');
+                fd.append('modo', 'catalogo');
+                fd.append('mensaje', txt);
+                var r = await fetch('api_chat.php', { method: 'POST', body: fd });
+                var d = await r.json();
+                out.textContent = d.ok ? d.respuesta : ('Error: ' + (d.error || 'No se pudo obtener respuesta.'));
+            } catch (e) {
+                out.textContent = 'Error de comunicación con el asistente.';
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    })();
+    </script>
 </body>
 </html>
 <?php

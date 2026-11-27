@@ -92,7 +92,7 @@ services:
     restart: unless-stopped
 
   chromadb:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:0.5.5
     container_name: ecommerce_chromadb
     expose:
       - "8000"

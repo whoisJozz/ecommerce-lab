@@ -23,7 +23,6 @@ if (!validateCsrfToken($_POST['csrf_token'] ?? null)) {
 $accion = (string)($_POST['accion'] ?? 'chat');
 $rol = (string)($_SESSION['rol'] ?? 'cliente');
 
-// Sincronizar catálogo (solo lectura desde esclavos -> ChromaDB)
 if ($accion === 'sincronizar') {
     if (!in_array($rol, ['admin', 'gerente'], true)) {
         http_response_code(403);
@@ -32,13 +31,13 @@ if ($accion === 'sincronizar') {
     }
 
     $conn = getConexion('lectura');
-    $res = $conn->query("SELECT id_producto, nombre, descripcion, precio, stock FROM productos");
+    $res = $conn->query("SELECT id_producto, nombre, precio, stock FROM productos");
     $productos = [];
     while ($row = $res->fetch_assoc()) {
         $productos[] = [
             'id_producto' => (int)$row['id_producto'],
             'nombre'      => (string)$row['nombre'],
-            'descripcion' => (string)($row['descripcion'] ?? ''),
+            'descripcion' => '',
             'precio'      => (float)$row['precio'],
             'stock'       => (int)$row['stock'],
         ];
@@ -56,7 +55,6 @@ if ($accion === 'sincronizar') {
     exit;
 }
 
-// Consulta al chatbot (catálogo o análisis de seguridad)
 $validacion = validate_plain_text((string)($_POST['mensaje'] ?? ''), 'Mensaje', 400, 2);
 if ($validacion['error'] !== '') {
     http_response_code(400);

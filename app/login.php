@@ -13,15 +13,27 @@ $email_ingresado = '';
 // Hash bcrypt de relleno: se verifica aunque el usuario no exista para igualar tiempos de respuesta
 const LOGIN_HASH_DUMMY = '$2y$10$WpvN.BlW2c3v2ksBTIqrWeJ899a5xP6GJLOukzHI2ggJTYZMeD/Va';
 
-// Completa el login: nueva sesión + variables de sesión + JWT firmado en cookie HttpOnly
+// Completa el login: nueva sesión + bloqueo único + variables de sesión + JWT firmado en cookie HttpOnly
 function finalizarLogin(array $u): void {
     regenerateSessionOnLogin();
 
-    $_SESSION['authenticated_user_id'] = (int)$u['id_usuario'];
-    $_SESSION['id_usuario']            = (int)$u['id_usuario'];
+    $uid = (int)$u['id_usuario'];
+    if (!acquireUserSessionLock($uid)) {
+        securityLog('SESION_DUPLICADA_BLOQUEADA', ['email' => $u['email']]);
+        session_unset();
+        session_destroy();
+        jwt_clear_cookie();
+        header('Location: login.php?error=sesion_duplicada');
+        exit;
+    }
+
+    $_SESSION['authenticated_user_id'] = $uid;
+    $_SESSION['id_usuario']            = $uid;
     $_SESSION['nombre']                = $u['nombre'];
     $_SESSION['email']                 = $u['email'];
     $_SESSION['rol']                   = $u['rol'];
+    $_SESSION['active_tab_token']      = bin2hex(random_bytes(16));
+    $_SESSION['tab_bound']             = false;
 
     jwt_set_cookie(jwt_issue_for_user($u));
 
@@ -30,6 +42,10 @@ function finalizarLogin(array $u): void {
 
     header('Location: ' . ($u['rol'] === 'admin' ? 'usuarios.php' : 'productos.php'));
     exit;
+}
+
+if (($_GET['error'] ?? '') === 'sesion_duplicada') {
+    $error = 'Este usuario ya tiene una sesión activa en otro navegador o dispositivo. Ciérrala o espera a que expire.';
 }
 
 // Aviso si la sesión caducó por inactividad
@@ -47,6 +63,8 @@ if (isset($_GET['cancelar'])) {
 
 // Permitir cerrar la sesión activa desde login.php para cambiar de cuenta
 if (isset($_GET['cambiar_cuenta'])) {
+    $uid = isset($_SESSION['authenticated_user_id']) ? (int)$_SESSION['authenticated_user_id'] : null;
+    releaseUserSessionLock($uid);
     session_unset();
     session_destroy();
     jwt_clear_cookie();
@@ -66,9 +84,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif (!validateCsrfToken($csrf_post)) {
             $error = 'Token CSRF inválido. Recarga la página e intenta nuevamente.';
         } elseif (isset($_POST['step']) && $_POST['step'] === '2fa') {
-            // =========================================================
-            // FASE 2: VERIFICACIÓN DEL CÓDIGO TOTP (6 DÍGITOS)
-            // =========================================================
             if (!isset($_SESSION['pending_2fa'])) {
                 $error = 'La verificación 2FA expiró. Vuelve a ingresar tus credenciales.';
             } else {
@@ -87,7 +102,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         unset($_SESSION['pending_2fa']);
                         finalizarLogin($pending);
                     } else {
-                        // Los códigos TOTP también cuentan como intentos fallidos (6 dígitos son fáciles de adivinar)
                         afb_registrar($pending['email'], $ip, false, 'totp_incorrecto');
                         $estado = afb_estado($pending['email'], $ip);
                         if ($estado['bloqueado']) {
@@ -100,27 +114,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         } else {
-            // =========================================================
-            // FASE 1: VALIDACIÓN DE CREDENCIALES (LECTURA EN ESCLAVOS)
-            // =========================================================
             $email_ingresado = clean_text((string)($_POST['email'] ?? ''), 100);
             $password = (string)($_POST['password'] ?? '');
 
             if ($email_ingresado === '' || $password === '') {
                 $error = 'Por favor, completa todos los campos.';
             } elseif (strlen($password) > 72 || !filter_var($email_ingresado, FILTER_VALIDATE_EMAIL)) {
-                // bcrypt solo procesa 72 bytes; un correo inválido ni siquiera consulta la BD
                 afb_registrar($email_ingresado, $ip, false, 'formato_invalido');
                 $error = 'Correo o contraseña incorrectos.';
             } else {
-                // 1) ¿Está bloqueado este correo o esta IP? (se comprueba ANTES de validar la contraseña)
                 $estado = afb_estado($email_ingresado, $ip);
 
                 if ($estado['bloqueado']) {
                     securityLog('LOGIN_BLOQUEADO', ['email' => afb_normalizar_email($email_ingresado), 'segundos' => $estado['segundos']]);
                     $error = afb_mensaje_bloqueo($estado['segundos']);
                 } else {
-                    // 2) Consulta de credenciales
                     $conn = getConexion('lectura');
                     $stmt = $conn->prepare(
                         "SELECT id_usuario, nombre, email, password, rol, email_verified, twofa_enabled, twofa_secret
@@ -149,7 +157,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $secreto = $usuario['twofa_secret'] ?? '';
                         $es_primer_registro = false;
 
-                        // Si tiene 2FA activo pero aún no tiene secreto en BD, generarlo y guardarlo en el Maestro
                         if ($secreto === '') {
                             $secreto = generateTotpSecret();
                             $es_primer_registro = true;
@@ -175,7 +182,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         header('Location: login.php');
                         exit;
                     } else {
-                        // Usuario sin 2FA activo
                         finalizarLogin($usuario);
                     }
                 }

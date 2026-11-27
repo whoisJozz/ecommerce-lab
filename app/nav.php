@@ -1,7 +1,5 @@
 <?php
 // app/nav.php - Barra de navegación única para todas las páginas autenticadas.
-// Los enlaces mostrados dependen del rol; $activo marca la página actual.
-// Incluye su propio CSS para verse bien aunque el navegador tenga style.css en caché.
 require_once __DIR__ . '/security_helper.php';
 require_once __DIR__ . '/session_helper.php';
 
@@ -25,9 +23,31 @@ function renderNav(string $activo = ''): void {
         $enlaces['carrito']   = ['carrito.php', 'Mi carrito'];
     }
 
-    // Segundos de sesión que le quedan al usuario (se reinicia con cada clic)
     $restante = max(0, SESSION_TIMEOUT - (time() - (int)($_SESSION['last_activity'] ?? time())));
+
+    $tabToken = (string)($_SESSION['active_tab_token'] ?? '');
+    $esPrimerBind = empty($_SESSION['tab_bound']);
+    if ($esPrimerBind && $tabToken !== '') {
+        $_SESSION['tab_bound'] = true;
+    }
     ?>
+<script>
+(function () {
+    var esPrimerBind = <?= $esPrimerBind ? 'true' : 'false' ?>;
+    var tokenServidor = <?= json_encode($tabToken) ?>;
+    if (esPrimerBind && tokenServidor) {
+        window.name = tokenServidor;
+        sessionStorage.setItem('ec_tab_token', tokenServidor);
+    } else {
+        var tokenPestana = sessionStorage.getItem('ec_tab_token');
+        if (!tokenServidor || !window.name || window.name !== tokenServidor || tokenPestana !== tokenServidor) {
+            document.documentElement.innerHTML = '<body style="background:#0a0d12;color:#ff8a8a;font-family:sans-serif;padding:40px;text-align:center;"><h2>Acceso bloqueado: sesión activa en otra pestaña</h2><p>Por seguridad, solo se permite una pestaña abierta con esta sesión. Cierra esta pestaña y continúa en la original.</p></body>';
+            window.stop();
+            return;
+        }
+    }
+})();
+</script>
 <style>
 .navbar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px 24px;max-width:950px;margin:0 0 25px 0;padding:10px 16px;background:linear-gradient(145deg,#11151c,#0a0d12);border:1px solid #2a3340;border-bottom:2px solid #ffd700;border-radius:4px;box-shadow:0 0 25px rgba(0,150,255,.08)}
 .navbar .navbar-links,.navbar .navbar-user{display:flex;align-items:center;flex-wrap:wrap;gap:8px 22px}
@@ -63,7 +83,7 @@ function renderNav(string $activo = ''): void {
     pintar();
     setInterval(function () {
         restante -= 1;
-        if (restante <= 0) { window.location.href = 'index.php'; return; }
+        if (restante <= 0) { window.location.href = 'logout.php'; return; }
         pintar();
     }, 1000);
 })();

@@ -3,6 +3,45 @@ require_once __DIR__ . '/jwt_helper.php';
 
 const SESSION_TIMEOUT = 120; // segundos de inactividad (2 minutos)
 
+function acquireUserSessionLock(int $userId): bool {
+    $lockFile = sys_get_temp_dir() . '/ec_user_lock_' . $userId . '.json';
+    $ahora = time();
+    $sidActual = session_id();
+
+    if (is_file($lockFile)) {
+        $data = json_decode((string)@file_get_contents($lockFile), true);
+        if (is_array($data)
+            && !empty($data['sid'])
+            && ($data['exp'] ?? 0) > $ahora
+            && $data['sid'] !== $sidActual) {
+            return false;
+        }
+    }
+
+    @file_put_contents($lockFile, json_encode([
+        'sid' => $sidActual,
+        'exp' => $ahora + SESSION_TIMEOUT,
+    ]), LOCK_EX);
+    return true;
+}
+
+function refreshUserSessionLock(int $userId): void {
+    $lockFile = sys_get_temp_dir() . '/ec_user_lock_' . $userId . '.json';
+    @file_put_contents($lockFile, json_encode([
+        'sid' => session_id(),
+        'exp' => time() + SESSION_TIMEOUT,
+    ]), LOCK_EX);
+}
+
+function releaseUserSessionLock(?int $userId): void {
+    if ($userId !== null && $userId > 0) {
+        $lockFile = sys_get_temp_dir() . '/ec_user_lock_' . $userId . '.json';
+        if (is_file($lockFile)) {
+            @unlink($lockFile);
+        }
+    }
+}
+
 function startSecureSession() {
     ini_set('session.cookie_httponly', 1);
     ini_set('session.use_only_cookies', 1);
@@ -17,6 +56,8 @@ function startSecureSession() {
     }
 
     if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity']) > SESSION_TIMEOUT) {
+        $uid = isset($_SESSION['authenticated_user_id']) ? (int)$_SESSION['authenticated_user_id'] : null;
+        releaseUserSessionLock($uid);
         session_unset();
         session_destroy();
         jwt_clear_cookie();
@@ -28,6 +69,8 @@ function startSecureSession() {
 }
 
 function destroySessionAndRedirect(): void {
+    $uid = isset($_SESSION['authenticated_user_id']) ? (int)$_SESSION['authenticated_user_id'] : null;
+    releaseUserSessionLock($uid);
     session_unset();
     session_destroy();
     jwt_clear_cookie();
@@ -35,12 +78,22 @@ function destroySessionAndRedirect(): void {
     exit;
 }
 
-// Exige sesión de servidor + JWT válido y coherente (misma identidad y mismo rol)
+// Exige sesión de servidor + JWT válido y coherente + bloqueo único por usuario
 function requireAuth() {
     if (!isset($_SESSION['authenticated_user_id'])) {
         header("Location: login.php");
         exit;
     }
+
+    $uid = (int)$_SESSION['authenticated_user_id'];
+    $lockFile = sys_get_temp_dir() . '/ec_user_lock_' . $uid . '.json';
+    if (is_file($lockFile)) {
+        $data = json_decode((string)@file_get_contents($lockFile), true);
+        if (!is_array($data) || ($data['sid'] ?? '') !== session_id() || ($data['exp'] ?? 0) <= time()) {
+            destroySessionAndRedirect();
+        }
+    }
+    refreshUserSessionLock($uid);
 
     try {
         $claims = jwt_current_claims();
@@ -51,7 +104,7 @@ function requireAuth() {
     }
 
     if ($claims === null
-        || (int)$claims['sub'] !== (int)$_SESSION['authenticated_user_id']
+        || (int)$claims['sub'] !== $uid
         || (string)$claims['rol'] !== (string)($_SESSION['rol'] ?? '')) {
         destroySessionAndRedirect();
     }
